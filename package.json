@@ -1,0 +1,27 @@
+{
+  "name": "zap-shift-server",
+  "version": "1.0.0",
+  "description": "A backend API for managing parcel deliveries, including order tracking, delivery zones, and shift management for delivery personnel.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "keywords": [
+    "shift",
+    "management",
+    "zap"
+  ],
+  "author": "Robin",
+  "license": "ISC",
+  "dependencies": {
+    "@tanstack/react-query-devtools": "^5.81.5",
+    "axios": "^1.10.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.4.0",
+    "mongodb": "^6.17.0",
+    "stripe": "^18.2.1"
+  }
+}
