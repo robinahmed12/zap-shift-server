@@ -8,7 +8,6 @@ const verifyFbToken = async (req, res, next) => {
       .status(401)
       .send({ message: "Unauthorized: No token provided." });
   }
-console.log(hi);
 
   const token = authorization.split(" ")[1];
 

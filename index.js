@@ -16,7 +16,7 @@ app.use(express.json());
 
 //
 
-const uri = `mongodb+srv://${process.env.DB_NAM}:${process.env.DB_PASS}@cluster0.mdfhcbd.mongodb.net/${process.DB_NAM}?retryWrites=true&w=majority&appName=Cluster0`;
+const uri = `mongodb+srv://${process.env.DB_NAM}:${process.env.DB_PASS}@cluster0.mdfhcbd.mongodb.net/${process.env.DB_NAM}?retryWrites=true&w=majority&appName=Cluster0`;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
@@ -54,14 +54,14 @@ async function run() {
       }
     });
     // parcel apis
-    app.post("/parcels", verifyFbToken,  async (req, res) => {
+    app.post("/parcels", verifyFbToken, async (req, res) => {
       const parcel = req.body;
 
       const result = await parcelCollection.insertOne(parcel);
       res.send(result);
     });
 
-    app.get("/my-parcel",  async (req, res) => {
+    app.get("/my-parcel", async (req, res) => {
       try {
         const userEmail = req.query.email;
 
@@ -78,6 +78,19 @@ async function run() {
       } catch (error) {
         console.error("Error fetching parcels:", error);
         res.status(500).send({ message: "Internal server error." });
+      }
+    });
+
+    app.get("/parcels/assignable", async (req, res) => {
+      try {
+        const query = {
+          payment_status: "paid",
+          delivery_status: "not_collected",
+        };
+        const parcels = await parcelCollection.find(query).toArray();
+        res.send(parcels);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch parcels" });
       }
     });
 
@@ -99,6 +112,16 @@ async function run() {
         res.send(parcel);
       } catch (error) {
         console.error("Error fetching parcel:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
+    app.get("/parcels", async (req, res) => {
+      try {
+        const parcels = await parcelCollection.find().toArray();
+        res.send(parcels);
+      } catch (error) {
+        console.error("Error fetching parcels:", error);
         res.status(500).send({ message: "Internal server error" });
       }
     });
@@ -156,6 +179,45 @@ async function run() {
         });
       } catch (error) {
         console.error("Error updating payment status:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
+    // Assign rider to a parcel
+    app.patch("/parcels/:id/assign-rider", async (req, res) => {
+      try {
+        const parcelId = req.params.id;
+        const { riderId, riderName, riderPhone } = req.body;
+
+        if (!ObjectId.isValid(parcelId)) {
+          return res.status(400).send({ message: "Invalid Parcel ID" });
+        }
+
+        const filter = { _id: new ObjectId(parcelId) };
+        const updateDoc = {
+          $set: {
+            assignedRider: {
+              riderId,
+              riderName,
+              riderPhone,
+            },
+            delivery_status: "assigned", // Optionally update status
+          },
+        };
+
+        const result = await parcelCollection.updateOne(filter, updateDoc);
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Parcel not found" });
+        }
+
+        res.send({
+          success: true,
+          message: "Rider assigned successfully",
+          result,
+        });
+      } catch (error) {
+        console.error("Error assigning rider:", error);
         res.status(500).send({ message: "Internal server error" });
       }
     });
@@ -311,29 +373,51 @@ async function run() {
       }
     });
 
-    app.get("/riders", verifyFbToken , verifyAdmin, async (req, res) => {
+    app.get("/riders", async (req, res) => {
       try {
         const status = req.query.status;
 
-        // Require the status query
         if (!status) {
           return res
             .status(400)
             .send({ message: "Status query parameter is required." });
         }
 
-        // Fetch riders with the given status
         const query = { status: status };
+
         const riders = await ridersCollection.find(query).toArray();
 
         res.send(riders);
       } catch (error) {
         console.error("Error fetching riders:", error);
-        res.status(500).send({ message: "Internal server error." });
+        res
+          .status(500)
+          .send({ message: "Internal server error.", error: error.message });
       }
     });
 
-    app.patch("/riders/:id", verifyFbToken , verifyAdmin, async (req, res) => {
+    // Get riders by city
+    app.get("/riders-by-city", async (req, res) => {
+      try {
+        const city = req.query.city;
+
+        if (!city) {
+          return res
+            .status(400)
+            .send({ message: "City query parameter is required" });
+        }
+
+        const query = { city: city, status: "active" }; // Only active riders
+        const riders = await ridersCollection.find(query).toArray();
+
+        res.send(riders);
+      } catch (error) {
+        console.error("Error fetching riders by city:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
+    app.patch("/riders/:id", async (req, res) => {
       try {
         const riderId = req.params.id;
         const updatedStatus = req.body.status;
@@ -375,50 +459,37 @@ async function run() {
       }
     });
 
-    app.get("/riders", verifyFbToken , verifyAdmin, async (req, res) => {
-      try {
-        const status = req.query.status;
-
-        let query = {};
-        if (status) {
-          query.status = status;
-        }
-
-        const activeRiders = await ridersCollection.find(query).toArray();
-
-        res.send(activeRiders);
-      } catch (error) {
-        console.error("Error fetching riders:", error);
-        res.status(500).send({ message: "Internal server error" });
-      }
-    });
-
     // admin api
-    app.patch("/users/admin/:email", verifyFbToken, verifyAdmin, async (req, res) => {
-      try {
-        const userEmail = req.params.email;
+    app.patch(
+      "/users/admin/:email",
+      verifyFbToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const userEmail = req.params.email;
 
-        const filter = { email: userEmail };
-        console.log("Updating user with email:", userEmail);
+          const filter = { email: userEmail };
+          console.log("Updating user with email:", userEmail);
 
-        const updateDoc = { $set: { role: "admin" } };
+          const updateDoc = { $set: { role: "admin" } };
 
-        const result = await userCollection.updateOne(filter, updateDoc);
+          const result = await userCollection.updateOne(filter, updateDoc);
 
-        if (result.matchedCount === 0) {
-          return res.status(404).send({ message: "User not found" });
+          if (result.matchedCount === 0) {
+            return res.status(404).send({ message: "User not found" });
+          }
+
+          res.send({
+            success: true,
+            message: "User has been promoted to admin successfully",
+            updateResult: result,
+          });
+        } catch (error) {
+          console.error("Error making user admin:", error);
+          res.status(500).send({ message: "Internal server error" });
         }
-
-        res.send({
-          success: true,
-          message: "User has been promoted to admin successfully",
-          updateResult: result,
-        });
-      } catch (error) {
-        console.error("Error making user admin:", error);
-        res.status(500).send({ message: "Internal server error" });
       }
-    });
+    );
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
