@@ -187,7 +187,7 @@ async function run() {
     app.patch("/parcels/:id/assign-rider", async (req, res) => {
       try {
         const parcelId = req.params.id;
-        const { riderId, riderName, riderPhone } = req.body;
+        const { riderId, riderName, riderPhone, riderEmail } = req.body;
 
         if (!ObjectId.isValid(parcelId)) {
           return res.status(400).send({ message: "Invalid Parcel ID" });
@@ -200,6 +200,7 @@ async function run() {
               riderId,
               riderName,
               riderPhone,
+              riderEmail,
             },
             delivery_status: "assigned", // Optionally update status
           },
@@ -393,6 +394,27 @@ async function run() {
         res
           .status(500)
           .send({ message: "Internal server error.", error: error.message });
+      }
+    });
+
+    app.get("/rider-assigned-parcels", async (req, res) => {
+      try {
+        const email = req.query.email;
+
+        if (!email) {
+          return res.status(400).send({ message: "Rider email is required" });
+        }
+
+        const query = {
+          delivery_status: { $in: ["assigned", "in_transit"] }, // Fixed here
+          "assignedRider.riderEmail": email,
+        };
+
+        const parcels = await parcelCollection.find(query).toArray();
+        res.send(parcels);
+      } catch (error) {
+        console.error("Error fetching assigned parcels:", error);
+        res.status(500).send({ message: "Internal server error" });
       }
     });
 
