@@ -37,6 +37,7 @@ async function run() {
     const paymentCollection = client.db("parcelDB").collection("payments");
     const userCollection = client.db("parcelDB").collection("users");
     const ridersCollection = client.db("parcelDB").collection("riders");
+    const trackingCollection = client.db("parcelDB").collection("tracking");
 
     // strip apis
     app.post("/create-payment-intent", async (req, res) => {
@@ -122,6 +123,110 @@ async function run() {
         res.send(parcels);
       } catch (error) {
         console.error("Error fetching parcels:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
+    app.get("/parcel-status-counts", async (req, res) => {
+      try {
+        const statusCounts = await parcelCollection
+          .aggregate([
+            {
+              $facet: {
+                // Count by delivery_status
+                statusSummary: [
+                  { $group: { _id: "$delivery_status", count: { $sum: 1 } } },
+                ],
+                // Special count: Paid but not assigned
+                paidNotAssigned: [
+                  {
+                    $match: {
+                      payment_status: "paid",
+                      delivery_status: "not_collected",
+                    },
+                  },
+                  { $count: "count" },
+                ],
+              },
+            },
+          ])
+          .toArray();
+
+        const result = statusCounts[0];
+
+        res.send({
+          success: true,
+          statusSummary: result.statusSummary,
+          paidNotAssigned: result.paidNotAssigned[0]?.count || 0,
+        });
+      } catch (error) {
+        console.error("Error fetching status counts:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
+    // PATCH route to update cashout status
+    app.patch("/parcels/:id/cashout", async (req, res) => {
+      try {
+        const parcelId = req.params.id;
+        const { cashout_status } = req.body;
+
+        if (!ObjectId.isValid(parcelId)) {
+          return res.status(400).send({ message: "Invalid Parcel ID" });
+        }
+
+        const filter = { _id: new ObjectId(parcelId) };
+        const updateDoc = { $set: { cashout_status: cashout_status } };
+
+        const result = await parcelCollection.updateOne(filter, updateDoc);
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Parcel not found" });
+        }
+
+        res.send({
+          success: true,
+          message: "Cashout status updated successfully",
+          result,
+        });
+      } catch (error) {
+        console.error("Error updating cashout status:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
+    // PATCH: Update delivery status and timestamps
+    app.patch("/parcels/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { delivery_status } = req.body;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: "Invalid parcel ID" });
+        }
+
+        const filter = { _id: new ObjectId(id) };
+        let updateDoc = { $set: { delivery_status } };
+
+        if (delivery_status === "in_transit") {
+          updateDoc.$set.picked_at = new Date();
+        } else if (delivery_status === "delivered") {
+          updateDoc.$set.delivered_at = new Date();
+        }
+
+        const result = await parcelCollection.updateOne(filter, updateDoc);
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Parcel not found" });
+        }
+
+        res.send({
+          success: true,
+          message: "Parcel updated successfully",
+          result,
+        });
+      } catch (error) {
+        console.error("Error updating parcel:", error);
         res.status(500).send({ message: "Internal server error" });
       }
     });
@@ -439,6 +544,28 @@ async function run() {
       }
     });
 
+    app.get("/rider-earnings", async (req, res) => {
+      try {
+        const email = req.query.email;
+
+        if (!email) {
+          return res.status(400).send({ message: "Rider email is required" });
+        }
+
+        const parcels = await parcelCollection
+          .find({
+            "assignedRider.riderEmail": email,
+            delivery_status: "delivered",
+          })
+          .toArray();
+
+        res.send(parcels);
+      } catch (error) {
+        console.error("Error fetching earnings:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
     app.patch("/riders/:id", async (req, res) => {
       try {
         const riderId = req.params.id;
@@ -478,6 +605,57 @@ async function run() {
       } catch (error) {
         console.error("Error updating rider status and user role:", error);
         res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
+    // GET Completed Deliveries by Rider
+    app.get("/rider-completed-parcels", async (req, res) => {
+      try {
+        const email = req.query.email;
+
+        if (!email) {
+          return res.status(400).send({ message: "Rider email is required" });
+        }
+
+        const query = {
+          delivery_status: "delivered",
+          "assignedRider.riderEmail": email,
+        };
+
+        const parcels = await parcelCollection.find(query).toArray();
+        res.send(parcels);
+      } catch (error) {
+        console.error("Error fetching completed parcels:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
+    // tracikng api
+    app.post("/tracking", async (req, res) => {
+      try {
+        const { tracking_id, status, details, updated_by, timestamp } =
+          req.body;
+
+        if (!tracking_id || !status || !details || !updated_by || !timestamp) {
+          return res.status(400).send({ message: "All fields are required." });
+        }
+
+        const result = await trackingCollection.insertOne({
+          tracking_id,
+          status,
+          details,
+          updated_by,
+          timestamp: new Date(timestamp), // Or can use server time: new Date()
+        });
+
+        res.send({
+          success: true,
+          message: "Tracking log saved successfully.",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Error saving tracking log:", error);
+        res.status(500).send({ message: "Internal server error." });
       }
     });
 
